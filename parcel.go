@@ -4,86 +4,93 @@ import (
 	"database/sql"
 )
 
-type ParcelStore interface {
-	Add(parcel Parcel) (int, error)
-	GetByClient(client int) ([]Parcel, error)
-	Get(number int) (Parcel, error)
-	SetStatus(number int, status string) error
-	SetAddress(number int, address string) error
-	Delete(number int) error
-}
-
-type SQLiteParcelStore struct {
+type ParcelStore struct {
 	db *sql.DB
 }
 
-func NewParcelStore(db *sql.DB) *SQLiteParcelStore {
-	return &SQLiteParcelStore{db: db}
+func NewParcelStore(db *sql.DB) ParcelStore {
+	return ParcelStore{db: db}
 }
 
-func (s *SQLiteParcelStore) Add(parcel Parcel) (int, error) {
-	stmt, err := s.db.Prepare("INSERT INTO parcel (client, status, address, created_at) VALUES (?, ?, ?, ?)")
+func (s ParcelStore) Add(p Parcel) (int, error) {
+	result, err := s.db.Exec("INSERT INTO parcel (client, status, address, created_at) VALUES (:client, :status, :address, :created_at)",
+		sql.Named("client", p.Client),
+		sql.Named("status", p.Status),
+		sql.Named("address", p.Address),
+		sql.Named("created_at", p.CreatedAt))
 	if err != nil {
 		return 0, err
 	}
-	res, err := stmt.Exec(parcel.Client, parcel.Status, parcel.Address, parcel.CreatedAt)
+
+	id, err := result.LastInsertId()
 	if err != nil {
 		return 0, err
 	}
-	id, err := res.LastInsertId()
-	return int(id), err
+
+	return int(id), nil
 }
 
-func (s *SQLiteParcelStore) GetByClient(client int) ([]Parcel, error) {
-	rows, err := s.db.Query("SELECT number, client, status, address, created_at FROM parcel WHERE client = ?", client)
+func (s ParcelStore) Get(number int) (Parcel, error) {
+	p := Parcel{}
+	err := s.db.QueryRow("SELECT number, client, status, address, created_at FROM parcel WHERE number = :number",
+		sql.Named("number", number)).
+		Scan(&p.Number, &p.Client, &p.Status, &p.Address, &p.CreatedAt)
+	if err != nil {
+		return Parcel{}, err
+	}
+
+	return p, nil
+}
+
+func (s ParcelStore) GetByClient(client int) ([]Parcel, error) {
+	rows, err := s.db.Query("SELECT number, client, status, address, created_at FROM parcel WHERE client = :client",
+		sql.Named("client", client))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var parcels []Parcel
+	var res []Parcel
 	for rows.Next() {
-		var parcel Parcel
-		if err := rows.Scan(&parcel.Number, &parcel.Client, &parcel.Status, &parcel.Address, &parcel.CreatedAt); err != nil {
+		var p Parcel
+		if err := rows.Scan(&p.Number, &p.Client, &p.Status, &p.Address, &p.CreatedAt); err != nil {
 			return nil, err
 		}
-		parcels = append(parcels, parcel)
+		res = append(res, p)
 	}
-	return parcels, nil
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return res, nil
 }
 
-func (s *SQLiteParcelStore) Get(number int) (Parcel, error) {
-	row := s.db.QueryRow("SELECT number, client, status, address, created_at FROM parcel WHERE number = ?", number)
-	var parcel Parcel
-	if err := row.Scan(&parcel.Number, &parcel.Client, &parcel.Status, &parcel.Address, &parcel.CreatedAt); err != nil {
-		return Parcel{}, err
-	}
-	return parcel, nil
-}
-
-func (s *SQLiteParcelStore) SetStatus(number int, status string) error {
-	stmt, err := s.db.Prepare("UPDATE parcel SET status = ? WHERE number = ?")
-	if err != nil {
-		return err
-	}
-	_, err = stmt.Exec(status, number)
+func (s ParcelStore) SetStatus(number int, status string) error {
+	_, err := s.db.Exec("UPDATE parcel SET status = :status WHERE number = :number",
+		sql.Named("status", status),
+		sql.Named("number", number))
 	return err
 }
 
-func (s *SQLiteParcelStore) SetAddress(number int, address string) error {
-	stmt, err := s.db.Prepare("UPDATE parcel SET address = ? WHERE number = ?")
+func (s ParcelStore) SetAddress(number int, address string) error {
+	_, err := s.db.Exec("UPDATE parcel SET address = :address WHERE number = :number AND status = :status",
+		sql.Named("address", address),
+		sql.Named("number", number),
+		sql.Named("status", ParcelStatusRegistered))
 	if err != nil {
 		return err
 	}
-	_, err = stmt.Exec(address, number)
-	return err
+
+	return nil
 }
 
-func (s *SQLiteParcelStore) Delete(number int) error {
-	stmt, err := s.db.Prepare("DELETE FROM parcel WHERE number = ?")
+func (s ParcelStore) Delete(number int) error {
+	_, err := s.db.Exec("DELETE FROM parcel WHERE number = :number AND status = :status",
+		sql.Named("number", number),
+		sql.Named("status", ParcelStatusRegistered))
 	if err != nil {
 		return err
 	}
-	_, err = stmt.Exec(number)
-	return err
+
+	return nil
 }
